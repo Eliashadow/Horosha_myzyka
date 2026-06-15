@@ -1,5 +1,5 @@
 import argparse
-import subprocess
+import os
 
 def attack(mac_address:str): 
     try:
@@ -15,8 +15,8 @@ def configure_audio_routing(mode: str):
             print("*** Routing Matrix: Bridging Input directly to Output ...")
             
             # Use Android's native command line utilities to force SCO / Communication routing
-            subprocess.run(["cmd", "audio", "set-mode", "3"], capture_output=True) # MODE_IN_COMMUNICATION is 3
-            subprocess.run(["cmd", "audio", "set-sco-on", "true"], capture_output=True)
+            os.system("adb shell cmd audio set-mode 3") # MODE_IN_COMMUNICATION is 3
+            os.system("adb shell cmd audio set-sco-on true")
             
             print("[+] Audio bridge active! Wait for pohana myzyka.")
 
@@ -25,8 +25,8 @@ def configure_audio_routing(mode: str):
             print("*** Routing Matrix: Severing external input to favor local apps...")
             
             # Reset system audio state back to normal media playback via shell
-            subprocess.run(["cmd", "audio", "set-sco-on", "false"], capture_output=True)
-            subprocess.run(["cmd", "audio", "set-mode", "0"], capture_output=True) # MODE_NORMAL is 0
+            os.system("adb shell cmd audio set-sco-on false")
+            os.system("adb shell cmd audio set-mode 0") # MODE_NORMAL is 0
             
             print("[+] Audio matrix reset. Local music apps will now rule the device! Save the day!!!")
 
@@ -37,14 +37,21 @@ def configure_audio_routing(mode: str):
 def doppleganger(new_name: str, mode: str):
     try:
         print(f"[*] Requesting Bluetooth name update to: {new_name}")
-        subprocess.run(["termux-bluetooth-set-name", new_name], check=True)
+        
+        # Bypassing the broken local package entirely via your working ADB intent bridge
+        adb_cmd = f"adb shell am broadcast -a com.termux.api.execute --es api_method BluetoothSetName --es name '{new_name}' --user 0"
+        
+        result = os.system(adb_cmd)
+        if result != 0:
+            raise Exception("ADB intent broadcast rejected by system daemon.")
+            
         print(f"[+] Successfully changed Bluetooth name to: {new_name}")
-    except FileNotFoundError:
-        print("[-] Error: termux-api package or companion app missing.")
-        print("Fix: Run 'pkg install termux-api' and verify the Termux:API app is installed.")
-        return
-    except subprocess.CalledProcessError as e:
-        print(f"[-] Hardware layer rejected name change: {e}")
+        
+        # Trigger the audio routing changes based on your mode selection
+        configure_audio_routing(mode)
+        
+    except Exception as e:
+        print(f"[-] Hardware layer rejected name change or audio configuration: {e}")
         return
     
     print("*** Press Ctrl+C to stop the doppleganger.")
@@ -54,6 +61,8 @@ def doppleganger(new_name: str, mode: str):
             time.sleep(1) 
     except KeyboardInterrupt:
         print("\n*** Looks like day was saved so stopping doppleganger and cleaning up...")
+        # Clean up the audio matrix automatically when you exit!
+        configure_audio_routing('priority')
 
 def main():
     parser = argparse.ArgumentParser(
