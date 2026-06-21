@@ -15,4 +15,5 @@ Attacks target with L2CAP floods pings with customasable number of threads and s
 # 3. Doppleganger 
 Spoofs another name to other devices + creates audio bridge that can be injected with your horosha_myzyka with another mode "priority"
 
+#
 Created by Sdern and Elias de Larias.
